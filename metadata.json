@@ -1,0 +1,6 @@
+{
+  "name": "Sneaker Cleaning & Restoration Estimator",
+  "description": "Interactive sneaker cleaning service price estimator and WhatsApp lead closer with dynamic calculation and operational tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
