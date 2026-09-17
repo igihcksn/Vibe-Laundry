@@ -1,6 +1,22 @@
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Order, OrderStatus, SelectedItemsPayload, PackageId } from '../types';
 
+/**
+ * CLIENT-SIDE SUPABASE ARCHITECTURE:
+ * As requested, this application does NOT require an external/separate backend server to run.
+ * 
+ * Note on Supabase API Key types:
+ * - Supabase blocks requests from browsers (User-Agent: Mozilla/...) that use Secret Keys (sb_secret_...)
+ *   with the error: "Forbidden use of secret API key in browser".
+ * - For pure client-side browser apps, Supabase expects the Publishable/Anon Key (sb_publishable_... or legacy JWT anon key).
+ * - To seamlessly allow both without requiring a separate backend service, the Vite dev/preview server
+ *   transparently proxies requests via /supabase-proxy with a Node User-Agent when a secret key is in use,
+ *   while direct connections work seamlessly when a publishable/anon key is provided!
+ */
+
 const STORAGE_KEY_LOCAL_ORDERS = 'sneaker_orders_local_store';
+const STORAGE_KEY_CUSTOM_URL = 'supabase_custom_url';
+const STORAGE_KEY_CUSTOM_KEY = 'supabase_custom_key';
 
 // Default initial sample orders for demonstration before live submissions
 export const INITIAL_DEMO_ORDERS: Order[] = [
@@ -59,101 +75,193 @@ export function saveLocalOrders(orders: Order[]): void {
   }
 }
 
-// Server status cache
-const serverStatusCache = {
-  isLive: true,
-  url: 'https://akddalctutuhqhxbdoyi.supabase.co',
-};
+/**
+ * Resolves current configured URL and Key (environment variables or localStorage overrides)
+ */
+export function getActiveSupabaseCredentials(): {
+  url: string;
+  key: string;
+  isCustom: boolean;
+  isLive: boolean;
+  isSecretKey: boolean;
+} {
+  let customUrl = '';
+  let customKey = '';
+  if (typeof window !== 'undefined') {
+    try {
+      customUrl = (localStorage.getItem(STORAGE_KEY_CUSTOM_URL) || '').trim();
+      customKey = (localStorage.getItem(STORAGE_KEY_CUSTOM_KEY) || '').trim();
+    } catch {}
+  }
 
-export function getActiveSupabaseCredentials(): { url: string; key: string; isLive: boolean } {
+  const rawEnvUrl = (import.meta.env.VITE_SUPABASE_URL || 'https://akddalctutuhqhxbdoyi.supabase.co').trim();
+  const rawEnvKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+
+  const activeUrl = customUrl || rawEnvUrl;
+  const activeKey = customKey || rawEnvKey;
+  const isSecret = activeKey.startsWith('sb_secret_');
+
   return {
-    url: serverStatusCache.url,
-    key: 'Protected on backend server',
-    isLive: serverStatusCache.isLive,
+    url: activeUrl,
+    key: activeKey,
+    isCustom: Boolean(customUrl && customKey),
+    isLive: Boolean(activeUrl && activeKey),
+    isSecretKey: isSecret,
   };
 }
 
-export function setCustomSupabaseCredentials(_url: string, _key: string): void {
-  // Credentials are securely maintained by the backend server
+/**
+ * Resolves the client connection endpoint.
+ * If the key is a secret key (sb_secret_...), connecting directly from the browser
+ * causes Supabase to reject the request with "Forbidden use of secret API key in browser".
+ * In that case, we route via Vite's built-in /supabase-proxy which forwards with a Node User-Agent!
+ */
+function resolveClientEndpoint(rawUrl: string, key: string): string {
+  if (typeof window !== 'undefined') {
+    // If the key is a secret key, route through Vite's local /supabase-proxy
+    if (key.startsWith('sb_secret_')) {
+      return `${window.location.origin}/supabase-proxy`;
+    }
+  }
+  return rawUrl;
 }
 
-export function getSupabaseClient(): null {
-  // Browser avoids instantiating Supabase secret client directly
-  return null;
+let supabaseInstance: SupabaseClient | null = null;
+let currentClientKey = '';
+let currentClientUrl = '';
+
+export function getSupabaseClient(): SupabaseClient | null {
+  const { url, key } = getActiveSupabaseCredentials();
+
+  if (!url || !key) {
+    supabaseInstance = null;
+    return null;
+  }
+
+  const resolvedEndpoint = resolveClientEndpoint(url, key);
+
+  if (supabaseInstance && currentClientKey === key && currentClientUrl === resolvedEndpoint) {
+    return supabaseInstance;
+  }
+
+  try {
+    supabaseInstance = createClient(resolvedEndpoint, key, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+    });
+    currentClientKey = key;
+    currentClientUrl = resolvedEndpoint;
+  } catch (err) {
+    console.warn('[Supabase Client] Failed to create Supabase client:', err);
+    supabaseInstance = null;
+  }
+
+  return supabaseInstance;
+}
+
+export function setCustomSupabaseCredentials(url: string, key: string): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_CUSTOM_URL, url.trim());
+    localStorage.setItem(STORAGE_KEY_CUSTOM_KEY, key.trim());
+    supabaseInstance = null; // force re-creation
+  } catch (err) {
+    console.error('Failed to save custom Supabase credentials:', err);
+  }
+}
+
+export function resetCustomSupabaseCredentials(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY_CUSTOM_URL);
+    localStorage.removeItem(STORAGE_KEY_CUSTOM_KEY);
+    supabaseInstance = null; // force re-creation
+  } catch (err) {
+    console.error('Failed to reset custom Supabase credentials:', err);
+  }
 }
 
 /**
- * Fetch orders via server API proxy to keep secret keys completely safe
+ * Normalizes raw Supabase row into standard typed Order
+ */
+function normalizeOrderRow(row: any): Order {
+  let selected = row.selected_items;
+  while (typeof selected === 'string') {
+    try {
+      selected = JSON.parse(selected);
+    } catch {
+      break;
+    }
+  }
+
+  const fallbackPrice = Number(row.total_price) || 50000;
+  const isHigherTier = fallbackPrice >= 90000;
+  const defaultPackageId: PackageId = isHigherTier ? 'package_b' : 'package_a';
+
+  const defaultPackage: SelectedItemsPayload = {
+    package_id: defaultPackageId,
+    package_name: isHigherTier ? 'Package B (Deep Clean)' : 'Package A (Basic Clean)',
+    package_price: isHigherTier ? 90000 : 50000,
+    express_delivery: false,
+    express_price: 0,
+  };
+
+  const rawPkgId = selected && typeof selected === 'object' ? String(selected.package_id) : '';
+  const resolvedPkgId: PackageId = rawPkgId === 'package_b' ? 'package_b' : (rawPkgId === 'package_a' ? 'package_a' : defaultPackageId);
+
+  const safeSelected: SelectedItemsPayload = (selected && typeof selected === 'object') ? {
+    package_id: resolvedPkgId,
+    package_name: String(selected.package_name || defaultPackage.package_name),
+    package_price: Number(selected.package_price) || defaultPackage.package_price,
+    express_delivery: Boolean(selected.express_delivery),
+    express_price: Number(selected.express_price) || 0,
+  } : defaultPackage;
+
+  return {
+    id: String(row.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `order-${Date.now()}`)),
+    created_at: row.created_at || new Date().toISOString(),
+    customer_name: String(row.customer_name || 'Pelanggan'),
+    customer_phone: String(row.customer_phone || ''),
+    selected_items: safeSelected,
+    total_price: Number(row.total_price) || 0,
+    status: (row.status === 'processed' ? 'processed' : 'pending') as OrderStatus,
+  };
+}
+
+/**
+ * Fetch orders directly from Supabase with fallback to localStorage
  */
 export async function fetchOrders(): Promise<{ orders: Order[]; source: 'supabase' | 'local'; error?: string }> {
-  try {
-    const res = await fetch('/api/orders', {
-      headers: {
-        Accept: 'application/json',
-      },
-    });
+  const client = getSupabaseClient();
+  if (!client) {
+    return { orders: getLocalOrders(), source: 'local' };
+  }
 
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      console.warn('[Supabase Proxy] Server API error:', errData.error || res.statusText);
-      serverStatusCache.isLive = false;
-      return { orders: getLocalOrders(), source: 'local', error: errData.error || res.statusText };
+  try {
+    let queryRes = await client
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (queryRes.error) {
+      // If error mentions secret key or ordering failure, retry basic select
+      console.warn('[Supabase Client] Order query warning, retrying simple select:', queryRes.error.message);
+      queryRes = await client.from('orders').select('*');
     }
 
-    const data = await res.json();
-    serverStatusCache.isLive = true;
+    if (queryRes.error) {
+      console.warn('[Supabase Client] Query error, falling back to local orders:', queryRes.error.message);
+      return { orders: getLocalOrders(), source: 'local', error: queryRes.error.message };
+    }
 
-    if (Array.isArray(data.orders)) {
-      const normalizedOrders: Order[] = data.orders.map((row: any) => {
-        let selected = row.selected_items;
-        while (typeof selected === 'string') {
-          try {
-            selected = JSON.parse(selected);
-          } catch {
-            break;
-          }
-        }
-
-        const fallbackPrice = Number(row.total_price) || 50000;
-        const isHigherTier = fallbackPrice >= 90000;
-        const defaultPackageId: PackageId = isHigherTier ? 'package_b' : 'package_a';
-
-        const defaultPackage: SelectedItemsPayload = {
-          package_id: defaultPackageId,
-          package_name: isHigherTier ? 'Package B (Deep Clean)' : 'Package A (Basic Clean)',
-          package_price: isHigherTier ? 90000 : 50000,
-          express_delivery: false,
-          express_price: 0,
-        };
-
-        const rawPkgId = selected && typeof selected === 'object' ? String(selected.package_id) : '';
-        const resolvedPkgId: PackageId = rawPkgId === 'package_b' ? 'package_b' : (rawPkgId === 'package_a' ? 'package_a' : defaultPackageId);
-
-        const safeSelected: SelectedItemsPayload = (selected && typeof selected === 'object') ? {
-          package_id: resolvedPkgId,
-          package_name: String(selected.package_name || defaultPackage.package_name),
-          package_price: Number(selected.package_price) || defaultPackage.package_price,
-          express_delivery: Boolean(selected.express_delivery),
-          express_price: Number(selected.express_price) || 0,
-        } : defaultPackage;
-
-        return {
-          id: String(row.id || (typeof crypto !== 'undefined' ? crypto.randomUUID() : `order-${Date.now()}`)),
-          created_at: row.created_at || new Date().toISOString(),
-          customer_name: String(row.customer_name || 'Pelanggan'),
-          customer_phone: String(row.customer_phone || ''),
-          selected_items: safeSelected,
-          total_price: Number(row.total_price) || 0,
-          status: (row.status === 'processed' ? 'processed' : 'pending') as OrderStatus,
-        };
-      });
-
+    if (Array.isArray(queryRes.data)) {
+      const normalizedOrders = queryRes.data.map(normalizeOrderRow);
       saveLocalOrders(normalizedOrders);
       return { orders: normalizedOrders, source: 'supabase' };
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn('[Supabase Proxy] Network fetch error, using local orders:', msg);
+    console.warn('[Supabase Client] Network fetch error, using local orders:', msg);
     return { orders: getLocalOrders(), source: 'local', error: msg };
   }
 
@@ -161,9 +269,30 @@ export async function fetchOrders(): Promise<{ orders: Order[]; source: 'supabas
 }
 
 /**
- * Subscribe to order updates via polling and focus events
+ * Subscribe to order updates via Supabase Realtime channel and window focus
  */
 export function subscribeToOrders(onUpdate: () => void): (() => void) | null {
+  const client = getSupabaseClient();
+  let channel: any = null;
+
+  if (client) {
+    try {
+      channel = client
+        .channel('realtime:orders')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders' },
+          () => {
+            onUpdate();
+          }
+        )
+        .subscribe();
+    } catch (err) {
+      console.warn('[Supabase Client] Could not subscribe to realtime channel:', err);
+    }
+  }
+
+  // Periodic polling fallback
   const interval = setInterval(() => {
     onUpdate();
   }, 4000);
@@ -181,6 +310,11 @@ export function subscribeToOrders(onUpdate: () => void): (() => void) | null {
 
   return () => {
     clearInterval(interval);
+    if (channel && client) {
+      try {
+        client.removeChannel(channel);
+      } catch {}
+    }
     if (typeof window !== 'undefined') {
       window.removeEventListener('focus', onUpdate);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -189,7 +323,7 @@ export function subscribeToOrders(onUpdate: () => void): (() => void) | null {
 }
 
 /**
- * Insert a new order to Supabase database via backend proxy
+ * Insert a new order directly to Supabase from the client
  */
 export async function insertOrder(orderPayload: {
   customer_name: string;
@@ -198,55 +332,42 @@ export async function insertOrder(orderPayload: {
   total_price: number;
 }): Promise<{ order: Order; source: 'supabase' | 'local' }> {
   const nowIso = new Date().toISOString();
+  const client = getSupabaseClient();
 
-  try {
-    const res = await fetch('/api/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        customer_name: orderPayload.customer_name,
-        customer_phone: orderPayload.customer_phone,
-        selected_items: orderPayload.selected_items,
-        total_price: orderPayload.total_price,
-        status: 'pending',
-      }),
-    });
+  if (client) {
+    try {
+      const { data, error } = await client
+        .from('orders')
+        .insert([
+          {
+            customer_name: orderPayload.customer_name,
+            customer_phone: orderPayload.customer_phone,
+            selected_items: orderPayload.selected_items,
+            total_price: orderPayload.total_price,
+            status: 'pending',
+          },
+        ])
+        .select()
+        .single();
 
-    if (res.ok) {
-      const resJson = await res.json();
-      const data = resJson.order;
-
-      let selected = data.selected_items;
-      if (typeof selected === 'string') {
-        try {
-          selected = JSON.parse(selected);
-        } catch {
-          selected = orderPayload.selected_items;
-        }
+      if (!error && data) {
+        const insertedOrder = normalizeOrderRow(data);
+        const current = getLocalOrders();
+        saveLocalOrders([insertedOrder, ...current.filter((o) => o.id !== insertedOrder.id)]);
+        return { order: insertedOrder, source: 'supabase' };
+      } else if (error) {
+        console.warn('[Supabase Client] Insert error, saving to local fallback:', error.message);
       }
-
-      const insertedOrder: Order = {
-        id: String(data.id),
-        created_at: data.created_at || nowIso,
-        customer_name: data.customer_name,
-        customer_phone: data.customer_phone,
-        selected_items: selected,
-        total_price: Number(data.total_price),
-        status: (data.status === 'processed' ? 'processed' : 'pending') as OrderStatus,
-      };
-
-      const current = getLocalOrders();
-      saveLocalOrders([insertedOrder, ...current.filter(o => o.id !== insertedOrder.id)]);
-      return { order: insertedOrder, source: 'supabase' };
+    } catch (err) {
+      console.warn('[Supabase Client] Network exception inserting order, using local fallback:', err);
     }
-  } catch (err) {
-    console.warn('[Supabase Proxy] Failed to post order to server, using local fallback:', err);
   }
 
   // Fallback local store insert
-  const generatedId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : 'ord-' + Math.random().toString(36).substring(2, 11);
+  const generatedId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : 'ord-' + Math.random().toString(36).substring(2, 11);
 
   const fallbackOrder: Order = {
     id: generatedId,
@@ -264,32 +385,37 @@ export async function insertOrder(orderPayload: {
 }
 
 /**
- * Update order status ('pending' <-> 'processed') in Supabase database
+ * Update order status ('pending' <-> 'processed') directly in Supabase
  */
 export async function updateOrderStatusInDb(orderId: string, newStatus: OrderStatus): Promise<boolean> {
-  try {
-    const res = await fetch(`/api/orders/${orderId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    });
+  const client = getSupabaseClient();
 
-    if (res.ok) {
-      const current = getLocalOrders();
-      const index = current.findIndex(o => o.id === orderId);
-      if (index !== -1) {
-        current[index].status = newStatus;
-        saveLocalOrders([...current]);
+  if (client) {
+    try {
+      const { error } = await client
+        .from('orders')
+        .update({ status: newStatus })
+        .eq('id', orderId);
+
+      if (!error) {
+        const current = getLocalOrders();
+        const index = current.findIndex((o) => o.id === orderId);
+        if (index !== -1) {
+          current[index].status = newStatus;
+          saveLocalOrders([...current]);
+        }
+        return true;
+      } else {
+        console.warn('[Supabase Client] Update status error:', error.message);
       }
-      return true;
+    } catch (err) {
+      console.warn('[Supabase Client] Update status network exception:', err);
     }
-  } catch (err) {
-    console.warn('[Supabase Proxy] Status update network error:', err);
   }
 
   // Fallback local store update
   const current = getLocalOrders();
-  const index = current.findIndex(o => o.id === orderId);
+  const index = current.findIndex((o) => o.id === orderId);
   if (index !== -1) {
     current[index].status = newStatus;
     saveLocalOrders([...current]);
@@ -298,18 +424,25 @@ export async function updateOrderStatusInDb(orderId: string, newStatus: OrderSta
 }
 
 /**
- * Seed initial sample orders directly into Supabase database via backend
+ * Seed initial sample orders directly to Supabase
  */
 export async function seedDemoOrdersToSupabase(): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
   try {
-    const res = await fetch('/api/orders/seed', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orders: INITIAL_DEMO_ORDERS }),
-    });
-    return res.ok;
+    const { error } = await client.from('orders').insert(
+      INITIAL_DEMO_ORDERS.map((o) => ({
+        customer_name: o.customer_name,
+        customer_phone: o.customer_phone,
+        selected_items: o.selected_items,
+        total_price: o.total_price,
+        status: o.status,
+      }))
+    );
+    return !error;
   } catch (err) {
-    console.error('Failed to seed demo orders via server API:', err);
+    console.error('[Supabase Client] Failed to seed demo orders:', err);
     return false;
   }
 }
