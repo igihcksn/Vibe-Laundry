@@ -24,8 +24,7 @@ import { ServiceSelector } from './components/ServiceSelector';
 import { CustomerForm } from './components/CustomerForm';
 import { PriceSummaryBox } from './components/PriceSummaryBox';
 import { OrderHistoryTable } from './components/OrderHistoryTable';
-import { SupabaseModal } from './components/SupabaseModal';
-import { CheckCircle2, MessageCircle, ArrowRight, ExternalLink, Loader2 } from 'lucide-react';
+import { CheckCircle2, MessageCircle, ArrowRight, ExternalLink, Loader2, AlertTriangle, Database } from 'lucide-react';
 
 export default function App() {
   // Service configuration state
@@ -42,15 +41,18 @@ export default function App() {
   const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(true);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
   const [storageSource, setStorageSource] = useState<'supabase' | 'local'>('local');
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSecretKeyError, setIsSecretKeyError] = useState<boolean>(false);
 
-  // Supabase modal & connection state
-  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
+  // Supabase connection state
   const [isSupabaseLive, setIsSupabaseLive] = useState<boolean>(false);
 
   // Success toast for dispatched order
   const [recentOrderSuccess, setRecentOrderSuccess] = useState<{
     id: string;
     waUrl: string;
+    source?: 'supabase' | 'local';
+    error?: string;
   } | null>(null);
 
   // Synchronous price calculation based on specification formula:
@@ -75,6 +77,16 @@ export default function App() {
       const result = await fetchOrders();
       setOrders(result.orders);
       setStorageSource(result.source);
+      if (result.source === 'supabase') {
+        setIsSupabaseLive(true);
+        setLoadError(null);
+        setIsSecretKeyError(false);
+      } else {
+        if (result.error) {
+          setLoadError(result.error);
+          setIsSecretKeyError(Boolean(result.isSecretKeyError));
+        }
+      }
     } catch (err) {
       console.error('Failed to load orders:', err);
     } finally {
@@ -166,8 +178,15 @@ export default function App() {
 
     const waUrl = buildWhatsAppUrl(messageText, ADMIN_WHATSAPP_NUMBER);
 
+    // Start database insertion immediately to ensure it reaches Supabase
+    const insertPromise = insertOrder({
+      customer_name: fullName.trim(),
+      customer_phone: cleanPhone,
+      selected_items: selectedItemsPayload,
+      total_price: totalPrice
+    });
+
     // Redirect user to WhatsApp page / new tab immediately to preserve user gesture
-    // Note: NEVER set window.location.href to wa.me because iframe containers reject WhatsApp framing!
     try {
       const openedWindow = window.open(waUrl, '_blank', 'noopener,noreferrer');
       if (!openedWindow) {
@@ -184,23 +203,23 @@ export default function App() {
     }
 
     try {
-      // Step: Persist order to database server (while main web shows loading indicator)
-      const result = await insertOrder({
-        customer_name: fullName.trim(),
-        customer_phone: cleanPhone,
-        selected_items: selectedItemsPayload,
-        total_price: totalPrice
-      });
-
+      // Step: Await database persistence
+      const result = await insertPromise;
       const newOrder = result.order;
 
       // Prepend new order directly to Order History table state
       setOrders((prev) => [newOrder, ...prev.filter((o) => o.id !== newOrder.id)]);
+      if (result.source === 'supabase') {
+        setStorageSource('supabase');
+        setIsSupabaseLive(true);
+      }
 
       // Provide notification state with easy re-open WhatsApp button
       setRecentOrderSuccess({
         id: newOrder.id,
-        waUrl
+        waUrl,
+        source: result.source,
+        error: result.error
       });
 
       // Reset form inputs & restore CTA button state
@@ -257,7 +276,6 @@ export default function App() {
       {/* App Header */}
       <Header 
         isSupabaseLive={isSupabaseLive} 
-        onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)} 
       />
 
       {/* Main Content Area */}
@@ -272,10 +290,15 @@ export default function App() {
               <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
               <div>
                 <p className="text-xs sm:text-sm font-semibold text-white">
-                  Order <span className="font-mono text-emerald-300">#{recentOrderSuccess.id.slice(0, 8)}</span> berhasil dicatat di database!
+                  Order <span className="font-mono text-emerald-300">#{recentOrderSuccess.id.slice(0, 8)}</span>{' '}
+                  {recentOrderSuccess.source === 'supabase'
+                    ? 'berhasil dicatat langsung ke Database Supabase!'
+                    : 'tersimpan di penyimpanan lokal browser.'}
                 </p>
                 <p className="text-xs text-emerald-300/80">
-                  Data order otomatis masuk ke tabel operasional di bawah.
+                  {recentOrderSuccess.source === 'supabase'
+                    ? 'Data order otomatis tersinkronisasi ke tabel operasional di bawah.'
+                    : 'Data order tercatat secara lokal. Hubungkan Supabase untuk sinkronisasi live.'}
                 </p>
               </div>
             </div>
@@ -294,11 +317,51 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setRecentOrderSuccess(null)}
-                className="text-xs text-emerald-400/80 hover:text-white px-2 py-1"
+                className="text-xs text-emerald-400/80 hover:text-white px-2 py-1 cursor-pointer"
               >
                 Tutup
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Database Connection Status Alert */}
+        {isSupabaseLive ? (
+          <div 
+            id="supabase-status-alert"
+            className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs text-emerald-300"
+          >
+            <div className="flex items-center space-x-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <div className="flex items-center space-x-1.5 flex-wrap">
+                <span className="font-semibold text-white">Status Database:</span>
+                <span>Terhubung ke Database Supabase.</span>
+                <span className="text-emerald-400/80">Data pesanan tersinkronisasi secara langsung ke cloud.</span>
+              </div>
+            </div>
+            <span className="text-[11px] font-mono text-emerald-300 bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-800 shrink-0">
+              Supabase Terhubung
+            </span>
+          </div>
+        ) : (
+          <div 
+            id="supabase-status-alert"
+            className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs text-slate-300"
+          >
+            <div className="flex items-center space-x-2.5">
+              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              <div className="flex items-center space-x-1.5 flex-wrap">
+                <span className="font-semibold text-white">Status Database:</span>
+                <span>
+                  {isSecretKeyError
+                    ? 'Perhatian: Terdeteksi Secret Key. Supabase membutuhkan Anon Key di browser.'
+                    : 'Menggunakan Penyimpanan Lokal. Riwayat pesanan tetap tercatat di browser saat pengiriman WhatsApp.'}
+                </span>
+              </div>
+            </div>
+            <span className="text-[11px] font-medium text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700 shrink-0">
+              Penyimpanan Lokal
+            </span>
           </div>
         )}
 
@@ -349,16 +412,6 @@ export default function App() {
           />
         </div>
       </main>
-
-      {/* Supabase Connection & SQL Schema Modal */}
-      <SupabaseModal
-        isOpen={isSupabaseModalOpen}
-        onClose={() => setIsSupabaseModalOpen(false)}
-        onConfigChanged={() => {
-          checkSupabaseStatus();
-          loadOrders();
-        }}
-      />
     </div>
   );
 }

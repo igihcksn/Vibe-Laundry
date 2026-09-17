@@ -5,10 +5,9 @@ import { formatIDR } from '../lib/formatters';
 
 interface HeaderProps {
   isSupabaseLive: boolean;
-  onOpenSupabaseModal: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ isSupabaseLive, onOpenSupabaseModal }) => {
+export const Header: React.FC<HeaderProps> = ({ isSupabaseLive }) => {
   return (
     <header id="app-header" className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
@@ -38,7 +37,7 @@ export const Header: React.FC<HeaderProps> = ({ isSupabaseLive, onOpenSupabaseMo
           </div>
         </div>
 
-        {/* Right Controls: Boundary Range & Supabase Status Button */}
+        {/* Right Controls: Boundary Range & Supabase Status Badge */}
         <div id="header-actions" className="flex items-center space-x-3">
           {/* Price Range Reference */}
           <div 
@@ -51,21 +50,25 @@ export const Header: React.FC<HeaderProps> = ({ isSupabaseLive, onOpenSupabaseMo
             </span>
           </div>
 
-          {/* Database Connection Button */}
-          <button
-            id="supabase-status-button"
-            type="button"
-            onClick={onOpenSupabaseModal}
-            className="flex items-center space-x-2 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 transition-all text-xs font-medium cursor-pointer"
-            title="Lihat Supabase SQL Schema"
+          {/* Database Connection Status Badge */}
+          <div
+            id="supabase-status-badge"
+            className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-medium"
           >
-            <Database className="w-4 h-4 text-emerald-400" />
-            <span className="text-slate-300 hidden sm:inline">Penyimpanan:</span>
-            <span className="flex items-center space-x-1 text-emerald-400 font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              <span>Client-Side (Lokal)</span>
-            </span>
-          </button>
+            <Database className={`w-3.5 h-3.5 ${isSupabaseLive ? 'text-emerald-400' : 'text-slate-400'}`} />
+            <span className="text-slate-400 hidden sm:inline">Database:</span>
+            {isSupabaseLive ? (
+              <span className="flex items-center space-x-1.5 text-emerald-400 font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Supabase Terhubung</span>
+              </span>
+            ) : (
+              <span className="flex items-center space-x-1.5 text-slate-300">
+                <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                <span>Penyimpanan Lokal</span>
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </header>

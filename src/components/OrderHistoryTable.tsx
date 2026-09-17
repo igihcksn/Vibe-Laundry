@@ -83,10 +83,14 @@ export const OrderHistoryTable: React.FC<OrderHistoryTableProps> = ({
             </h2>
             <span 
               id="storage-badge-indicator"
-              className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full border flex items-center space-x-1.5 bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border flex items-center space-x-1.5 ${
+                storageSource === 'supabase'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+              }`}
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              <span>Penyimpanan Lokal (Client-Side)</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${storageSource === 'supabase' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+              <span>{storageSource === 'supabase' ? 'Database Supabase (Live)' : 'Penyimpanan Lokal (Offline)'}</span>
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
