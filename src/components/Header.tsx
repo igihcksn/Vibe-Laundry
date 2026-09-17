@@ -59,19 +59,12 @@ export const Header: React.FC<HeaderProps> = ({ isSupabaseLive, onOpenSupabaseMo
             className="flex items-center space-x-2 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 transition-all text-xs font-medium cursor-pointer"
             title="Lihat Supabase SQL Schema"
           >
-            <Database className="w-4 h-4 text-slate-400" />
-            <span className="text-slate-300 hidden sm:inline">Database:</span>
-            {isSupabaseLive ? (
-              <span className="flex items-center space-x-1 text-emerald-400 font-semibold">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span>Supabase Live</span>
-              </span>
-            ) : (
-              <span className="flex items-center space-x-1 text-amber-400 font-semibold">
-                <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                <span>Storage Ready</span>
-              </span>
-            )}
+            <Database className="w-4 h-4 text-emerald-400" />
+            <span className="text-slate-300 hidden sm:inline">Penyimpanan:</span>
+            <span className="flex items-center space-x-1 text-emerald-400 font-semibold">
+              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span>Client-Side (Lokal)</span>
+            </span>
           </button>
         </div>
       </div>

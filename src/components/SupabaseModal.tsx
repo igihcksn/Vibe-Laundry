@@ -1,10 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Database, Check, Copy, Terminal, Key, Info, RefreshCw, ShieldAlert } from 'lucide-react';
-import { 
-  getActiveSupabaseCredentials, 
-  setCustomSupabaseCredentials, 
-  resetCustomSupabaseCredentials 
-} from '../lib/supabase';
+import React, { useState } from 'react';
+import { X, Database, Check, Copy, Terminal, Info, ShieldCheck, CheckCircle2 } from 'lucide-react';
 
 interface SupabaseModalProps {
   isOpen: boolean;
@@ -27,7 +22,7 @@ create table if not exists public.orders (
 alter table public.orders enable row level security;
 
 -- 3. Row Level Security Policies
--- Insert: Public anon role can submit quote orders
+-- Insert: Public role can submit quote orders
 create policy "Public insert access" 
   on public.orders 
   for insert 
@@ -49,23 +44,8 @@ create policy "Public update status access"
 export const SupabaseModal: React.FC<SupabaseModalProps> = ({
   isOpen,
   onClose,
-  onConfigChanged,
 }) => {
   const [copied, setCopied] = useState(false);
-  const [urlInput, setUrlInput] = useState('');
-  const [keyInput, setKeyInput] = useState('');
-  const [isSecretWarning, setIsSecretWarning] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      const creds = getActiveSupabaseCredentials();
-      setUrlInput(creds.url);
-      setKeyInput(creds.key);
-      setIsSecretWarning(creds.isSecretKey);
-      setSaveSuccess(false);
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -73,34 +53,6 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
     navigator.clipboard.writeText(SQL_SCHEMA_SCRIPT);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleSaveCredentials = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!urlInput.trim() || !keyInput.trim()) return;
-
-    setCustomSupabaseCredentials(urlInput.trim(), keyInput.trim());
-    setIsSecretWarning(keyInput.trim().startsWith('sb_secret_'));
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3000);
-
-    if (onConfigChanged) {
-      onConfigChanged();
-    }
-  };
-
-  const handleResetCredentials = () => {
-    resetCustomSupabaseCredentials();
-    const creds = getActiveSupabaseCredentials();
-    setUrlInput(creds.url);
-    setKeyInput(creds.key);
-    setIsSecretWarning(creds.isSecretKey);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3000);
-
-    if (onConfigChanged) {
-      onConfigChanged();
-    }
   };
 
   return (
@@ -121,8 +73,8 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
               <Database className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">Konfigurasi Database & SQL Schema</h3>
-              <p className="text-xs text-slate-400">Pengaturan Supabase Client-Side & Tabel 'orders'</p>
+              <h3 className="text-base font-bold text-white">Arsitektur & Spesifikasi Database</h3>
+              <p className="text-xs text-slate-400">100% Client-Side Storage & Skema Tabel 'orders'</p>
             </div>
           </div>
           <button
@@ -137,95 +89,41 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
 
         {/* Modal Body */}
         <div className="px-6 py-5 overflow-y-auto space-y-5 text-xs text-slate-300">
-          {/* Key Explanation / Warning Note */}
-          <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
-            <div className="flex items-start space-x-2.5">
-              <Info className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <h4 className="text-xs font-semibold text-white">Panduan Tipe Kunci API Supabase</h4>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Supabase secara otomatis memblokir kunci bertipe <code className="text-amber-300">sb_secret_...</code> langsung di browser (<span className="italic text-slate-300">Forbidden use of secret API key in browser</span>). 
-                  Untuk aplikasi sisi klien, gunakan <strong className="text-emerald-400">Publishable / Anon Key</strong> (<code className="text-emerald-300">sb_publishable_...</code> atau token JWT).
-                </p>
-                {isSecretWarning && (
-                  <div className="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-center space-x-2 text-[11px]">
-                    <ShieldAlert className="w-4 h-4 shrink-0" />
-                    <span>
-                      Kunci saat ini berformat <code>sb_secret_</code>. Sistem otomatis merutekannya via proxy dev internal tanpa memerlukan server terpisah. Untuk produksi murni client-side, disarankan menggunakan <code>sb_publishable_</code>.
-                    </span>
-                  </div>
-                )}
+          {/* Status Architecture Card */}
+          <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 space-y-2.5">
+            <div className="flex items-center space-x-2 text-emerald-400 font-semibold text-xs">
+              <ShieldCheck className="w-4 h-4" />
+              <span>Penyimpanan Murni Client-Side (Offline Ready)</span>
+            </div>
+            <p className="text-slate-300 text-[11px] leading-relaxed">
+              Sisi klien (browser) <strong>tidak lagi mengakses endpoint API <code className="text-emerald-300">rest/v1/orders</code></strong>, sehingga tidak memerlukan server backend terpisah dan terbebas dari kesalahan otentikasi kunci rahasia peramban (<span className="italic text-slate-400">Forbidden use of secret API key in browser</span>).
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
+              <div className="flex items-center space-x-1.5 text-slate-300">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>Tanpa request jaringan ke rest/v1</span>
+              </div>
+              <div className="flex items-center space-x-1.5 text-slate-300">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>Penyimpanan lokal persisten</span>
+              </div>
+              <div className="flex items-center space-x-1.5 text-slate-300">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>Order langsung terhubung ke WhatsApp</span>
+              </div>
+              <div className="flex items-center space-x-1.5 text-slate-300">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>Status pesanan dapat di-toggle instan</span>
               </div>
             </div>
           </div>
-
-          {/* Configuration Form */}
-          <form onSubmit={handleSaveCredentials} className="space-y-3 p-4 rounded-xl bg-slate-950/50 border border-slate-800/80">
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-white flex items-center space-x-1.5">
-                <Key className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Kredensial Supabase (Opsional Simpan di Browser)</span>
-              </span>
-              {saveSuccess && (
-                <span className="text-[11px] text-emerald-400 font-medium flex items-center space-x-1">
-                  <Check className="w-3 h-3" />
-                  <span>Kredensial Diperbarui!</span>
-                </span>
-              )}
-            </div>
-
-            <div className="space-y-2.5">
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Supabase Project URL</label>
-                <input
-                  type="url"
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
-                  placeholder="https://your-project.supabase.co"
-                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-emerald-500 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">
-                  Supabase API Key (Publishable / Anon Key disukai)
-                </label>
-                <input
-                  type="text"
-                  value={keyInput}
-                  onChange={(e) => setKeyInput(e.target.value)}
-                  placeholder="sb_publishable_... atau eyJhbGciOiJIUzI1NiIsInR5..."
-                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-emerald-500 font-mono"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end space-x-2 pt-1">
-              <button
-                type="button"
-                onClick={handleResetCredentials}
-                className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium transition-colors"
-                title="Kembalikan ke environment default"
-              >
-                <RefreshCw className="w-3 h-3" />
-                <span>Reset Default</span>
-              </button>
-              <button
-                type="submit"
-                className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors shadow-sm"
-              >
-                <Check className="w-3 h-3" />
-                <span>Terapkan Kunci</span>
-              </button>
-            </div>
-          </form>
 
           {/* SQL Table Schema */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-white flex items-center space-x-1.5">
                 <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Supabase SQL Script (Spesifikasi Tabel & RLS)</span>
+                <span>Spesifikasi Tabel PostgreSQL / Supabase</span>
               </span>
               <button
                 type="button"
@@ -258,7 +156,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
             onClick={onClose}
             className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-colors cursor-pointer"
           >
-            Selesai
+            Tutup
           </button>
         </div>
       </div>
